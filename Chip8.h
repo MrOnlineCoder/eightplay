@@ -38,6 +38,9 @@ const unsigned int CHIP8_PROGRAM_START = 0x200;
 const unsigned int CHIP8_STACK_SIZE = 16;
 const unsigned int CHIP8_REGISTERS = 16;
 const unsigned int CARRY_REGISTER = CHIP8_REGISTERS - 1;
+const unsigned int CHIP8_KBD_SIZE = 16;
+const unsigned int CHIP8_DEFAULT_CYCLES = 300;
+const unsigned int CHIP8_CLOCK_SPEED = 60;
 
 const int CHIP8_SCREEN_WIDTH = 64;
 const int CHIP8_SCREEN_HEIGHT = 32;
@@ -81,15 +84,56 @@ namespace Chip8Opcodes {
 	const Opcode SetProgramCounterPlusV0 = 0xB000;
 
 	const Opcode GenRandom = 0xC000;
+
+	const Opcode DrawSprite = 0xD000;
+
+	const Opcode SkipIfKeyIsPressed = 0xE09E;
+	const Opcode SkipIfKeyIsNotPressed = 0xE0A1;
+
+	const Opcode GetDelayTimerValue = 0xF007;
+
+	const Opcode WaitKeyPress = 0xF0A;
+
+	const Opcode SetDelayTimer = 0xF015;
+	const Opcode SetSoundTimer = 0xF018;
+
+	const Opcode IndexAdd = 0xF01E;
+	const Opcode IndexSetFont = 0xF029;
+
+	const Opcode IndexBCD = 0xF033;
+
+	const Opcode RegistersToMemory = 0xF055;
+	const Opcode MemoryToRegisters = 0xF065;
+};
+
+const std::array<sf::Uint8, 80u> fontset = {
+	0xF0, 0x90, 0x90, 0x90, 0xF0, //0
+	0x20, 0x60, 0x20, 0x20, 0x70, //1
+	0xF0, 0x10, 0xF0, 0x80, 0xF0, //2
+	0xF0, 0x10, 0xF0, 0x10, 0xF0, //3
+	0x90, 0x90, 0xF0, 0x10, 0x10, //4
+	0xF0, 0x80, 0xF0, 0x10, 0xF0, //5
+	0xF0, 0x80, 0xF0, 0x90, 0xF0, //6
+	0xF0, 0x10, 0x20, 0x40, 0x40, //7
+	0xF0, 0x90, 0xF0, 0x90, 0xF0, //8
+	0xF0, 0x90, 0xF0, 0x10, 0xF0, //9
+	0xF0, 0x90, 0xF0, 0x90, 0x90, //A
+	0xE0, 0x90, 0xE0, 0x90, 0xE0, //B
+	0xF0, 0x80, 0x80, 0x80, 0xF0, //C
+	0xE0, 0x90, 0x90, 0x90, 0xE0, //D
+	0xF0, 0x80, 0xF0, 0x80, 0xF0, //E
+	0xF0, 0x80, 0xF0, 0x80, 0x80, //F
 };
 
 class Chip8 {
 public:
 	Chip8();
 	bool loadFromFile(const std::string& filename);
+	void loadFromMemory(const sf::Uint8* mem, std::size_t sz);
 
 	void prepare(sf::RenderWindow& target);
 	void execute();
+	void update();
 
 	void printData();
 	void printMemory();
@@ -98,6 +142,16 @@ public:
 
 	sf::Text errText;
 	sf::Text debugText;
+
+	std::array<std::array<sf::Uint8, CHIP8_SCREEN_HEIGHT>, CHIP8_SCREEN_WIDTH> screen;
+
+	void processKeyPress(sf::Event& ev);
+	void processKeyRelease(sf::Event& ev);
+
+	void setCycles(int perSecond);
+	int getCycles();
+
+	bool running;
 private:
 	sf::RenderWindow* window;
 
@@ -109,12 +163,28 @@ private:
 	void push(sf::Uint16 value);
 	sf::Uint16 pop();
 
+	void unknownOpcode(sf::Uint16 opcode);
+
+	void clearScreen();
+
 	std::array<sf::Uint8, CHIP8_MEMORY_SIZE> memory;
 	
 	std::array<sf::Uint16, CHIP8_STACK_SIZE> stack;
 
 	std::array<sf::Uint16, CHIP8_REGISTERS> registers;
 	sf::Uint16 indexRegister;
+
+	sf::Uint16 inputMask;
+	std::array<sf::Keyboard::Key, CHIP8_KBD_SIZE> kbdmap;
+
+	sf::Uint16 delayTimer;
+	sf::Uint16 soundTimer;
+
+	sf::Clock delayClock;
+	sf::Clock soundClock;
+
+	sf::Clock cycleClock;
+	int cycles;
 
 	std::vector<sf::Uint8> data; //raw data loaded from ROM file
 };

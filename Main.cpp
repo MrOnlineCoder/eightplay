@@ -40,17 +40,24 @@ int main(int argc, char* argv[]) {
 
 	Chip8 chip8;
 
+	if (argc == 3) {
+		int cycles = std::stoi(argv[2]);
+
+		chip8.setCycles(cycles);
+	}
+
 	if (!chip8.loadFromFile(std::string(argv[1]))) {
 		std::cerr << "Error: failed to load file " << argv[1] << std::endl;
 		return 1;
 	}
 
 	sf::RenderWindow window;
-	window.create(sf::VideoMode(1024,768), "eightplay");
+	window.create(sf::VideoMode(1024,768), "eightplay", sf::Style::Titlebar | sf::Style::Close);
 	window.setFramerateLimit(60);
 
 	chip8.prepare(window);
-	chip8.printMemory();
+
+	window.setTitle("eightplay ROM: "+std::string(argv[1])+" Cycles: "+std::to_string(chip8.getCycles()));
 
 	sf::Font fnt;
 	if (!fnt.loadFromFile("opensans.ttf")) {
@@ -60,28 +67,60 @@ int main(int argc, char* argv[]) {
 
 	chip8.errText.setFont(fnt);
 	chip8.errText.setCharacterSize(21);
-	chip8.errText.setString("Ready.");
-	chip8.errText.setPosition(10, window.getSize().y - chip8.errText.getGlobalBounds().height - 15);
+	chip8.errText.setPosition(10, 10);
+	chip8.errText.setFillColor(sf::Color::Yellow);
 
 	chip8.debugText.setFont(fnt);
 	chip8.debugText.setCharacterSize(18);
 
 	chip8.updateDebugText();
 
+	const int PIXEL_SIZE = (int)window.getSize().x / CHIP8_SCREEN_WIDTH;
+
+	sf::RectangleShape pixel;
+	pixel.setOutlineColor(sf::Color::White);
+	pixel.setOutlineThickness(0.0f);
+	pixel.setSize(sf::Vector2f(PIXEL_SIZE, PIXEL_SIZE));
+
 	while (window.isOpen()) {
 		sf::Event evt;
 		while (window.pollEvent(evt)) {
 			if (evt.type == sf::Event::Closed) window.close();
 
+			if (evt.type == sf::Event::KeyPressed) {
+				chip8.processKeyPress(evt);
+				chip8.updateDebugText();
+				continue;
+			}
+
 			if (evt.type == sf::Event::KeyReleased) {
-				if (evt.key.code == sf::Keyboard::Space) {
+				if (!chip8.running && evt.key.code == sf::Keyboard::F2) {
 					chip8.execute();
 					chip8.updateDebugText();
+					continue;
 				}
+
+				chip8.processKeyRelease(evt);
+				chip8.updateDebugText();
+				continue;
+			}
+		}
+	
+		chip8.update();
+
+		window.clear();
+
+		for (int x = 0; x < CHIP8_SCREEN_WIDTH; x++) {
+			for (int y = 0; y < CHIP8_SCREEN_HEIGHT; y++) {
+				if (!chip8.screen[x][y]) continue;
+				
+				pixel.setFillColor(chip8.screen[x][y] ? sf::Color::White : sf::Color::Black);
+				pixel.setPosition(x * PIXEL_SIZE, y * PIXEL_SIZE);
+				window.draw(pixel);
 			}
 		}
 
-		window.clear();
+		if (!chip8.running) window.draw(chip8.errText);
 
 		window.draw(chip8.debugText);
 		window.display();

@@ -32,15 +32,46 @@
 #include <iterator>
 #include <random>
 #include <sstream>
+#include <bitset>
 
-//Thanks @fallahn for this short snippet! 
+//Thanks @fallahn for this snippet! 
 std::default_random_engine rndEngine(static_cast<unsigned long>(std::time(0)));
 std::uniform_int_distribution<unsigned short> distribution(0, 0xFF);
 sf::Uint16 randNext() { return distribution(rndEngine); }
 
+
 Chip8::Chip8() {
 	pc = CHIP8_PROGRAM_START;
 	indexRegister = 0;
+
+	delayTimer = 0;
+	soundTimer = 0;
+
+	clearScreen();
+
+	kbdmap[0x1] = sf::Keyboard::Key::Num1;
+	kbdmap[0x2] = sf::Keyboard::Key::Num2;
+	kbdmap[0x3] = sf::Keyboard::Key::Num3;
+	kbdmap[0xC] = sf::Keyboard::Key::Num4;
+
+	kbdmap[0x4] = sf::Keyboard::Key::Q;
+	kbdmap[0x5] = sf::Keyboard::Key::W;
+	kbdmap[0x6] = sf::Keyboard::Key::E;
+	kbdmap[0xD] = sf::Keyboard::Key::R;
+
+	kbdmap[0x7] = sf::Keyboard::Key::A;
+	kbdmap[0x8] = sf::Keyboard::Key::S;
+	kbdmap[0x9] = sf::Keyboard::Key::D;
+	kbdmap[0xE] = sf::Keyboard::Key::F;
+
+	kbdmap[0xA] = sf::Keyboard::Key::Z;
+	kbdmap[0x0] = sf::Keyboard::Key::X;
+	kbdmap[0xB] = sf::Keyboard::Key::C;
+	kbdmap[0xF] = sf::Keyboard::Key::V;
+
+	running = true;
+
+	cycles = CHIP8_DEFAULT_CYCLES;
 }
 
 bool Chip8::loadFromFile(const std::string & filename) {
@@ -60,7 +91,6 @@ bool Chip8::loadFromFile(const std::string & filename) {
 
 	data.reserve(fileSize);
 
-	//uhh, I do not really like how c++ reads binary files, fread is better imho
 	data.insert(data.begin(),
 		std::istream_iterator<sf::Uint8>(file),
 		std::istream_iterator<sf::Uint8>());
@@ -68,12 +98,16 @@ bool Chip8::loadFromFile(const std::string & filename) {
 	return true;
 }
 
+void Chip8::loadFromMemory(const sf::Uint8 * mem, std::size_t sz) {
+	data.clear();
+	data.reserve(sz);
+	for (std::size_t i = 0; i < sz; i++) {
+		data.push_back(mem[i]);
+	}
+}
+
 void Chip8::prepare(sf::RenderWindow & target) {
 	this->window = &target;
-
-	/*for (std::size_t i = 0; i < data.size(); i+=2) {
-		//code.push_back((data[i] << 8) | data[i+1]);
-	}*/
 
 	std::memcpy(&memory[CHIP8_PROGRAM_START], data.data(), data.size());
 	std::memset(registers.data(), 0u, CHIP8_REGISTERS);
@@ -93,7 +127,7 @@ void Chip8::execute() {
 	Clear the display.	
 	*/
 	if (opcode == Chip8Opcodes::ClearScreen) {
-		errText.setString("Cleared the screen.");
+		clearScreen();
 		advance(2);
 		return;
 	}
@@ -395,8 +429,258 @@ void Chip8::execute() {
 		return;
 	}
 
-	std::cout << "Unknown opcode: " << std::hex << opcode << std::endl;
-	advance(2);
+	/*
+	Dxyn - DRW Vx, Vy, nibble
+	Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
+
+	The interpreter reads n bytes from memory, starting at the address stored in I. 
+	These bytes are then displayed as sprites on screen at coordinates (Vx, Vy). 
+	Sprites are XORed onto the existing screen. 
+	If this causes any pixels to be erased, VF is set to 1, otherwise it is set to 0. 
+	If the sprite is positioned so part of it is outside the coordinates of the display, 
+	it wraps around to the opposite side of the screen. 
+	*/
+
+	if (optype == Chip8Opcodes::DrawSprite) {
+		auto n = opcode & 0x000F;
+		auto regx = (opcode & 0x0F00) >> 8;
+		auto regy = (opcode & 0x00F0) >> 4;
+
+		auto x = registers[regx];
+		auto y = registers[regy];
+
+		for (int i = 0; i < n; ++i) {
+			sf::Uint8 a = memory[indexRegister + i];
+
+			for (int col = 0; col < 8; ++col) {
+				bool bitValue = a & (0x80 >> col);
+
+				int sx = (x + col) % CHIP8_SCREEN_WIDTH;
+				int sy = (y + i) % CHIP8_SCREEN_HEIGHT;
+
+				if (screen[sx][sy] == 1) registers[CARRY_REGISTER] = 1;
+
+				if (bitValue) {
+					screen[sx][sy] = screen[sx][sy] ^ 1;
+				}
+			}
+		}
+		advance(2);
+		return;
+	}
+
+	/*
+	Ex9E - SKP Vx
+	Skip next instruction if key with the value of Vx is pressed.
+
+	Checks the keyboard, and if the key corresponding to the value of Vx is currently in the down position, 
+	PC is increased by 2.
+	*/
+	if ((opcode & 0xF0FF) == Chip8Opcodes::SkipIfKeyIsPressed) {
+		auto reg = (opcode & 0x0F00) >> 8;
+
+		if ((inputMask & (1 << registers[reg])) != 0) {
+			advance(4);
+		} else {
+			advance(2);
+		}
+		return;
+	}
+
+	/*
+	ExA1 - SKNP Vx
+	Skip next instruction if key with the value of Vx is not pressed.
+
+	Checks the keyboard, and if the key corresponding to the value of Vx is currently in the up position, PC is increased by 2.
+	*/
+
+	if ((opcode & 0xF0FF) == Chip8Opcodes::SkipIfKeyIsNotPressed) {
+		auto reg = (opcode & 0x0F00) >> 8;
+
+		if ((inputMask & (1 << registers[reg])) == 0) {
+			advance(4);
+		}
+		else {
+			advance(2);
+		}
+		return;
+	}
+
+	/*
+	Fx07 - LD Vx, DT
+	Set Vx = delay timer value.
+
+	The value of DT is placed into Vx.
+	*/
+
+	if ((opcode & 0xF0FF) == Chip8Opcodes::GetDelayTimerValue) {
+		auto reg = (opcode & 0x0F00) >> 8;
+
+		registers[reg] = delayTimer;
+		advance(2);
+		return;
+	}
+
+	/*
+	Fx0A - LD Vx, K
+	Wait for a key press, store the value of the key in Vx.
+
+	All execution stops until a key is pressed, then the value of that key is stored in Vx.
+	*/
+
+	if ((opcode & 0xF0FF) == Chip8Opcodes::WaitKeyPress) {
+		auto reg = (opcode & 0x0F00) >> 8;
+
+		for (auto i = 0; i < CHIP8_KBD_SIZE; ++i) {
+			if (inputMask & (1 << i)) {
+				registers[reg] = i;
+				advance(2);
+				return;
+			}
+		}
+
+		return;
+	}
+
+	/*
+	Fx15 - LD DT, Vx
+	Set delay timer = Vx.
+
+	DT is set equal to the value of Vx.
+	*/
+	if ((opcode & 0xF0FF) == Chip8Opcodes::SetDelayTimer) {
+		auto reg = (opcode & 0x0F00) >> 8;
+
+		delayTimer = registers[reg];
+		advance(2);
+
+		return;
+	}
+
+	/*
+	Fx18 - LD ST, Vx
+	Set sound timer = Vx.
+
+	ST is set equal to the value of Vx.
+	*/
+	if ((opcode & 0xF0FF) == Chip8Opcodes::SetSoundTimer) {
+		auto reg = (opcode & 0x0F00) >> 8;
+
+		soundTimer = registers[reg];
+		advance(2);
+
+		return;
+	}
+
+	/*
+	Fx1E - ADD I, Vx
+	Set I = I + Vx.
+
+	The values of I and Vx are added, and the results are stored in I.
+	*/
+	if ((opcode & 0xF0FF) == Chip8Opcodes::IndexAdd) {
+		auto reg = (opcode & 0x0F00) >> 8;
+
+		indexRegister = indexRegister + registers[reg];
+		advance(2);
+
+		return;
+	}
+
+	/*
+	Fx29 - LD F, Vx
+	Set I = location of sprite for digit Vx.
+
+	The value of I is set to the location for the hexadecimal sprite corresponding to the value of Vx.
+	*/
+	if ((opcode & 0xF0FF) == Chip8Opcodes::IndexSetFont) {
+		auto reg = (opcode & 0x0F00) >> 8;
+
+		indexRegister = registers[reg] * 0x5;
+		advance(2);
+
+		return;
+	}
+
+	/*
+	Fx33 - LD B, Vx
+	Store BCD representation of Vx in memory locations I, I+1, and I+2.
+
+	The interpreter takes the decimal value of Vx, 
+	and places the hundreds digit in memory at location in I, 
+	the tens digit at location I+1, 
+	and the ones digit at location I+2.
+	*/
+	if ((opcode & 0xF0FF) == Chip8Opcodes::IndexBCD) {
+		auto reg = (opcode & 0x0F00) >> 8;
+
+		auto val = registers[reg];
+
+		auto hunderds = val / 100;
+		auto tens = (val / 10) % 10;
+		auto ones = (val % 100) % 10;
+
+		memory[indexRegister] = hunderds;
+		memory[indexRegister + 1] = tens;
+		memory[indexRegister + 2] = ones;
+
+		advance(2);
+		return;
+	}
+
+	/*
+	Fx55 - LD [I], Vx
+	Store registers V0 through Vx in memory starting at location I.
+
+	The interpreter copies the values of registers V0 through Vx into memory, starting at the address in I.
+	*/
+	if ((opcode & 0xF0FF) == Chip8Opcodes::RegistersToMemory) {
+		auto x = (opcode & 0x0F00) >> 8;
+
+		for (int i = 0; i <= x; i++) {
+			memory[indexRegister + i] = registers[i];
+		}
+
+		advance(2);
+		return;
+	}
+
+	/*
+	Fx65 - LD Vx, [I]
+	Read registers V0 through Vx from memory starting at location I.
+
+	The interpreter reads values from memory starting at location I into registers V0 through Vx.
+	*/
+	if ((opcode & 0xF0FF) == Chip8Opcodes::MemoryToRegisters) {
+		auto x = (opcode & 0x0F00) >> 8;
+
+		for (int i = 0; i <= x; i++) {
+			registers[i] = memory[indexRegister + i];
+		}
+
+		advance(2);
+		return;
+	}
+
+	unknownOpcode(opcode);
+	return;
+}
+
+void Chip8::update() {
+	if (!running) return;
+
+	if (cycleClock.getElapsedTime().asMilliseconds() > 1000 / cycles) {
+		cycleClock.restart();
+		execute();
+		updateDebugText();
+	}
+
+	if (delayTimer > 0) {
+		if (delayClock.getElapsedTime().asMilliseconds() > 1000 / CHIP8_CLOCK_SPEED) {
+			delayTimer--;
+			delayClock.restart();
+		}
+	}
 }
 
 void Chip8::printData() {
@@ -417,15 +701,49 @@ void Chip8::printMemory() {
 void Chip8::updateDebugText() {
 	std::stringstream sstream;
 
-	sstream << "Program counter: " << pc << " Stack pointer: " << sp << "\n";
+	sstream << "Program counter: " << pc << " Stack pointer: " << sp << " Index register: " << indexRegister << " Input mask: " << std::bitset<16>(inputMask) << "\n";
 	sstream << "Registers: ";
 
 	for (int r = 0; r < CHIP8_REGISTERS; r++) {
-		sstream << "V" << r << "=" << std::hex << registers[r] << "\n ";
+		sstream << "V" << r << "=" << std::hex << registers[r] << " ";
+
+		if (r == 8) sstream << "\n";
 	}
 
 	debugText.setString(sstream.str());
 	debugText.setPosition(10, window->getSize().y - debugText.getGlobalBounds().height - 15);
+}
+
+void Chip8::processKeyPress(sf::Event & ev) {
+	for (int i = 0; i < CHIP8_KBD_SIZE; i++) {
+		if (ev.key.code == kbdmap[i]) {
+			inputMask |= (1 << i);
+			return;
+		}
+	}
+}
+
+void Chip8::processKeyRelease(sf::Event & ev) {
+	for (int i = 0; i < CHIP8_KBD_SIZE; i++) {
+		if (ev.key.code == kbdmap[i]) {
+			inputMask &= ~(1 << i);
+			return;
+		}
+	}
+}
+
+void Chip8::setCycles(int perSecond) {
+	if (perSecond <= 0) {
+		running = false;
+		errText.setString("Manual mode. Press F2 for next opcode");
+		return;
+	}
+
+	cycles = perSecond;
+}
+
+int Chip8::getCycles() {
+	return cycles;
 }
 
 void Chip8::advance(int a) {
@@ -438,4 +756,22 @@ void Chip8::push(sf::Uint16 value) {
 
 sf::Uint16 Chip8::pop() {
 	return stack[sp--];
+}
+
+void Chip8::unknownOpcode(sf::Uint16 opcode) {
+	running = false;
+
+	std::stringstream ss;
+
+	ss << "Unknown opcode: 0x" << std::hex << std::uppercase << opcode << "\n";
+
+	errText.setString(ss.str());
+}
+
+void Chip8::clearScreen() {
+	for (int x = 0; x < CHIP8_SCREEN_WIDTH; x++) {
+		for (int y = 0; y < CHIP8_SCREEN_HEIGHT; y++) {
+			screen[x][y] = 0;
+		}
+	}
 }
