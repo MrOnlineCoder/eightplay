@@ -39,7 +39,7 @@ const unsigned int CHIP8_STACK_SIZE = 16;
 const unsigned int CHIP8_REGISTERS = 16;
 const unsigned int CARRY_REGISTER = CHIP8_REGISTERS - 1;
 const unsigned int CHIP8_KBD_SIZE = 16;
-const unsigned int CHIP8_DEFAULT_CYCLES = 300;
+const unsigned int CHIP8_DEFAULT_CYCLES = 60;
 const unsigned int CHIP8_CLOCK_SPEED = 60;
 
 const int CHIP8_SCREEN_WIDTH = 64;
@@ -92,7 +92,7 @@ namespace Chip8Opcodes {
 
 	const Opcode GetDelayTimerValue = 0xF007;
 
-	const Opcode WaitKeyPress = 0xF0A;
+	const Opcode WaitKeyPress = 0xF00A;
 
 	const Opcode SetDelayTimer = 0xF015;
 	const Opcode SetSoundTimer = 0xF018;
@@ -138,6 +138,9 @@ public:
 	void printData();
 	void printMemory();
 
+	void setRunning(bool arg);
+	bool isRunning();
+
 	void updateDebugText();
 
 	sf::Text errText;
@@ -151,8 +154,9 @@ public:
 	void setCycles(int perSecond);
 	int getCycles();
 
-	bool running;
+	bool error;
 private:
+	bool running;
 	sf::RenderWindow* window;
 
 	unsigned int pc; //program counter, or instruction pointer

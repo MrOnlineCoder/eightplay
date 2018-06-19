@@ -12,7 +12,7 @@ eightplay <file> [speed]
 ```
 
 where `file` is path to CHIP-8 ROM.
-`speed` is the speed of emulator (instructions / second). **Optional**. If not specified, default value of 300 is used.
+`speed` is the speed of emulator (instructions / second). **Optional**. If not specified, default value of 60 is used. **FPS == speed**
 Set to 0 to enable **manual mode** - you have to run each next instruction by pressing F2.
 
 ## Thanks to:

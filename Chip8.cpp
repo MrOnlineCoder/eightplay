@@ -47,6 +47,8 @@ Chip8::Chip8() {
 	delayTimer = 0;
 	soundTimer = 0;
 
+	error = false;
+
 	clearScreen();
 
 	kbdmap[0x1] = sf::Keyboard::Key::Num1;
@@ -109,6 +111,8 @@ void Chip8::loadFromMemory(const sf::Uint8 * mem, std::size_t sz) {
 void Chip8::prepare(sf::RenderWindow & target) {
 	this->window = &target;
 
+	std::memcpy(memory.data(), fontset.data(), fontset.size());
+
 	std::memcpy(&memory[CHIP8_PROGRAM_START], data.data(), data.size());
 	std::memset(registers.data(), 0u, CHIP8_REGISTERS);
 	std::memset(stack.data(), 0u, CHIP8_STACK_SIZE);
@@ -138,6 +142,7 @@ void Chip8::execute() {
 	*/
 	if (opcode == Chip8Opcodes::Return) {
 		pc = pop();
+		advance(2);
 		return;
 	}
 	
@@ -669,11 +674,8 @@ void Chip8::execute() {
 void Chip8::update() {
 	if (!running) return;
 
-	if (cycleClock.getElapsedTime().asMilliseconds() > 1000 / cycles) {
-		cycleClock.restart();
-		execute();
-		updateDebugText();
-	}
+	execute();
+	updateDebugText();
 
 	if (delayTimer > 0) {
 		if (delayClock.getElapsedTime().asMilliseconds() > 1000 / CHIP8_CLOCK_SPEED) {
@@ -698,16 +700,32 @@ void Chip8::printMemory() {
 	}
 }
 
+void Chip8::setRunning(bool arg) {
+	running = arg;
+}
+
+bool Chip8::isRunning() {
+	return running;
+}
+
 void Chip8::updateDebugText() {
+	Opcode oc = memory[pc] << 8 | memory[pc + 1];
+
 	std::stringstream sstream;
 
-	sstream << "Program counter: " << pc << " Stack pointer: " << sp << " Index register: " << indexRegister << " Input mask: " << std::bitset<16>(inputMask) << "\n";
+	sstream << "Program counter: " << pc << std::hex << " (0x" << pc << ")" << std::dec << " Stack pointer: " << sp << " Index register: " << indexRegister 
+		<< " Input mask: " << std::bitset<16>(inputMask) << " Next opcode: " << std::hex << oc << "\n";
 	sstream << "Registers: ";
 
 	for (int r = 0; r < CHIP8_REGISTERS; r++) {
 		sstream << "V" << r << "=" << std::hex << registers[r] << " ";
 
 		if (r == 8) sstream << "\n";
+	}
+
+	sstream << "\nStack:\n";
+	for (int i = 0; i < stack.size(); i++) {
+		if (stack[i] != 0x0) sstream << std::hex << "0x" << stack[i] << "\n";
 	}
 
 	debugText.setString(sstream.str());
@@ -735,6 +753,7 @@ void Chip8::processKeyRelease(sf::Event & ev) {
 void Chip8::setCycles(int perSecond) {
 	if (perSecond <= 0) {
 		running = false;
+		error = true;
 		errText.setString("Manual mode. Press F2 for next opcode");
 		return;
 	}
@@ -748,6 +767,12 @@ int Chip8::getCycles() {
 
 void Chip8::advance(int a) {
 	pc += a;
+
+	if (pc >= memory.size()) {
+		errText.setString("Out of memory.");
+		running = false;
+		return;
+	}
 }
 
 void Chip8::push(sf::Uint16 value) {
@@ -755,11 +780,13 @@ void Chip8::push(sf::Uint16 value) {
 }
 
 sf::Uint16 Chip8::pop() {
-	return stack[sp--];
+	return stack[--sp];
 }
 
 void Chip8::unknownOpcode(sf::Uint16 opcode) {
-	running = false;
+	setRunning(false);
+
+	error = true;
 
 	std::stringstream ss;
 

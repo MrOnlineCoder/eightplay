@@ -53,7 +53,6 @@ int main(int argc, char* argv[]) {
 
 	sf::RenderWindow window;
 	window.create(sf::VideoMode(1024,768), "eightplay", sf::Style::Titlebar | sf::Style::Close);
-	window.setFramerateLimit(60);
 
 	chip8.prepare(window);
 
@@ -64,6 +63,8 @@ int main(int argc, char* argv[]) {
 		std::cerr << "Error: failed to load opensans font!" << std::endl;
 		return 2;
 	}
+
+	window.setFramerateLimit(chip8.getCycles());
 
 	chip8.errText.setFont(fnt);
 	chip8.errText.setCharacterSize(21);
@@ -85,7 +86,9 @@ int main(int argc, char* argv[]) {
 	while (window.isOpen()) {
 		sf::Event evt;
 		while (window.pollEvent(evt)) {
-			if (evt.type == sf::Event::Closed) window.close();
+			if (evt.type == sf::Event::Closed) {
+				window.close();
+			}
 
 			if (evt.type == sf::Event::KeyPressed) {
 				chip8.processKeyPress(evt);
@@ -94,7 +97,12 @@ int main(int argc, char* argv[]) {
 			}
 
 			if (evt.type == sf::Event::KeyReleased) {
-				if (!chip8.running && evt.key.code == sf::Keyboard::F2) {
+				if (evt.key.code == sf::Keyboard::F3) {
+					chip8.setRunning(!chip8.isRunning());
+					continue;
+				}
+
+				if (!chip8.isRunning() && evt.key.code == sf::Keyboard::F2) {
 					chip8.execute();
 					chip8.updateDebugText();
 					continue;
@@ -105,7 +113,7 @@ int main(int argc, char* argv[]) {
 				continue;
 			}
 		}
-	
+
 		chip8.update();
 
 		window.clear();
@@ -120,7 +128,7 @@ int main(int argc, char* argv[]) {
 			}
 		}
 
-		if (!chip8.running) window.draw(chip8.errText);
+		if (chip8.error) window.draw(chip8.errText);
 
 		window.draw(chip8.debugText);
 		window.display();
